@@ -11,9 +11,7 @@
     <style>
         body { font-family: Arial, sans-serif; text-align: center; background-color: #222; color: white; margin: 0; padding: 10px; }
         .container { position: relative; display: inline-block; margin-top: 10px; }
-        /* Imagen temporal oculta para cargar cada frame */
         #imgOculta { display: none; }
-        /* Canvas principal donde el usuario ve el resultado */
         #canvasOutput { border: 2px solid #fff; border-radius: 10px; background-color: #000; width: 320px; height: 240px; }
         button { padding: 15px; font-size: 18px; margin: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; width: 90%; max-width: 320px; }
         #status { font-size: 18px; font-weight: bold; margin: 10px; color: yellow; }
@@ -24,8 +22,6 @@
     <h2>Asistente IA ESP32</h2>
     <div id="status">Cargando Modelo de IA...</div>
 
-    <!-- AQUÍ PONES LA IP DE TU ESP32. OJO: DEJA EL http:// -->
-    <!-- Como usaremos frames individuales, no pongas ninguna ruta al final, solo la IP -->
     <img id="imgOculta" crossorigin="anonymous" />
     
     <div class="container">
@@ -36,9 +32,10 @@
     <button id="btnStart" disabled>Iniciar Detección</button>
 
     <script>
-        // --- CONFIGURACIÓN DE TU ESP32 ---
-        // Cambia esto por la IP que te dio el monitor serie (asegúrate de incluir http://)
-        const ESP32_URL = "http://192.168.1.10"; 
+        // ==========================================
+        // AQUÍ ESTÁ TU IP YA CONFIGURADA
+        // ==========================================
+        const ESP32_URL = "http://192.168.1.10/capture"; 
         
         const imgElement = document.getElementById('imgOculta');
         const canvas = document.getElementById('canvasOutput');
@@ -67,23 +64,21 @@
         async function procesarFrame() {
             if (!isDetecting) return;
 
-            // Le pedimos al ESP32 la foto actual agregando un número aleatorio para evitar el caché del navegador
-            imgElement.src = `${ESP32_URL}/?nocache=${Math.random()}`;
+            // Le pedimos al ESP32 la foto a través de tu IP
+            imgElement.src = `${ESP32_URL}?nocache=${Math.random()}`;
 
-            // Cuando la foto termina de cargar desde el WiFi, la IA la analiza
+            // Cuando la foto termina de cargar desde tu ESP32, la IA la analiza
             imgElement.onload = async () => {
-                // Dibujar la foto cruda en el recuadro negro
                 ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
 
-                // La IA busca objetos
                 const predicciones = await model.detect(canvas);
 
-                // Dibujar cuadrados sobre los objetos encontrados
                 predicciones.forEach(prediccion => {
                     const [x, y, width, height] = prediccion.bbox;
                     const objeto = prediccion.class;
                     const seguridad = Math.round(prediccion.score * 100);
 
+                    // Si detecta obstáculos importantes (Personas, carros, camiones, sillas)
                     if(objeto === "person" || objeto === "car" || objeto === "truck" || objeto === "chair") {
                         ctx.strokeStyle = "#FF0000";
                         ctx.lineWidth = 4;
@@ -95,23 +90,22 @@
                         ctx.font = "16px Arial";
                         ctx.fillText(`${objeto} (${seguridad}%)`, x + 5, y - 5);
 
-                        // Si estás en celular y detecta algo con alta seguridad, vibra
+                        // Si estás en celular y detecta algo, vibra
                         if(seguridad > 70 && navigator.vibrate) {
                             navigator.vibrate(150); 
                         }
                     }
                 });
 
-                // Inmediatamente después de terminar, pedir el siguiente frame (Simula video en tiempo real)
+                // Pedir la siguiente foto inmediatamente
                 if(isDetecting) {
                     timerAnalisis = setTimeout(procesarFrame, 50);
                 }
             };
 
-            // Si hay un error de conexión con el ESP32, reintentar en 1 segundo
+            // Si hay un error, reintentar
             imgElement.onerror = () => {
                 if(isDetecting) {
-                    console.log("Reintentando conexión con ESP32...");
                     timerAnalisis = setTimeout(procesarFrame, 1000);
                 }
             };
@@ -124,7 +118,7 @@
                 btnStart.innerText = "Detener Detección";
                 btnStart.style.backgroundColor = "#F44336";
                 statusText.innerText = "Analizando en vivo...";
-                procesarFrame(); // Iniciar el bucle
+                procesarFrame(); 
             } else {
                 isDetecting = false;
                 clearTimeout(timerAnalisis);
