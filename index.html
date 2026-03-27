@@ -5,37 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IA Asistente Visual (iPhone)</title>
     
-    <!-- Importar TensorFlow.js y el modelo COCO-SSD directamente -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     
     <style>
         body { font-family: Arial, sans-serif; text-align: center; background-color: #222; color: white; margin: 0; padding: 10px; }
-        .container { position: relative; display: inline-block; }
-        /* Imagen oculta que recibe el video del ESP32 */
-        #videoESP32 { display: none; }
-        /* Canvas donde se dibuja el video y los cuadros de la IA */
-        #canvasOutput { border: 2px solid #fff; border-radius: 10px; max-width: 100%; width: 320px; height: 240px; }
-        button { padding: 15px; font-size: 18px; margin: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; width: 90%; }
+        .container { position: relative; display: inline-block; margin-top: 10px; }
+        /* Imagen temporal oculta para cargar cada frame */
+        #imgOculta { display: none; }
+        /* Canvas principal donde el usuario ve el resultado */
+        #canvasOutput { border: 2px solid #fff; border-radius: 10px; background-color: #000; width: 320px; height: 240px; }
+        button { padding: 15px; font-size: 18px; margin: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; width: 90%; max-width: 320px; }
         #status { font-size: 18px; font-weight: bold; margin: 10px; color: yellow; }
     </style>
 </head>
 <body>
 
-    <h2>Asistente IA ESP32-CAM</h2>
-    <div id="status">Cargando Modelo de IA... Por favor espera.</div>
+    <h2>Asistente IA ESP32</h2>
+    <div id="status">Cargando Modelo de IA...</div>
 
-    <!-- CAMBIA ESTA IP POR LA IP REAL DE TU ESP32-CAM -->
-    <img id="videoESP32" src="http://192.168.1.10/" crossorigin="anonymous" />
+    <!-- AQUÍ PONES LA IP DE TU ESP32. OJO: DEJA EL http:// -->
+    <!-- Como usaremos frames individuales, no pongas ninguna ruta al final, solo la IP -->
+    <img id="imgOculta" crossorigin="anonymous" />
     
     <div class="container">
         <canvas id="canvasOutput" width="320" height="240"></canvas>
     </div>
 
+    <br>
     <button id="btnStart" disabled>Iniciar Detección</button>
 
     <script>
-        const imgElement = document.getElementById('videoESP32');
+        // --- CONFIGURACIÓN DE TU ESP32 ---
+        // Cambia esto por la IP que te dio el monitor serie (asegúrate de incluir http://)
+        const ESP32_URL = "http://192.168.1.10"; 
+        
+        const imgElement = document.getElementById('imgOculta');
         const canvas = document.getElementById('canvasOutput');
         const ctx = canvas.getContext('2d');
         const statusText = document.getElementById('status');
@@ -43,11 +48,11 @@
         
         let model = null;
         let isDetecting = false;
+        let timerAnalisis = null;
 
-        // 1. Cargar el modelo de IA cuando se abre la página
+        // 1. Cargar el modelo pre-entrenado
         async function cargarModelo() {
             try {
-                // Descarga el modelo pre-entrenado desde internet
                 model = await cocoSsd.load(); 
                 statusText.innerText = "IA Lista. Presiona Iniciar.";
                 statusText.style.color = "#00FF00";
@@ -58,62 +63,78 @@
             }
         }
 
-        // 2. Función cíclica para analizar imagen por imagen
-        async function detectarObjetos() {
+        // 2. Función que pide una foto nueva al ESP32 y la analiza
+        async function procesarFrame() {
             if (!isDetecting) return;
 
-            // Dibujar el frame actual del ESP32 en el canvas
-            ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
+            // Le pedimos al ESP32 la foto actual agregando un número aleatorio para evitar el caché del navegador
+            imgElement.src = `${ESP32_URL}/?nocache=${Math.random()}`;
 
-            // La IA analiza la imagen
-            const predicciones = await model.detect(canvas);
+            // Cuando la foto termina de cargar desde el WiFi, la IA la analiza
+            imgElement.onload = async () => {
+                // Dibujar la foto cruda en el recuadro negro
+                ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
 
-            // Dibujar los resultados
-            predicciones.forEach(prediccion => {
-                const [x, y, width, height] = prediccion.bbox;
-                const objeto = prediccion.class;
-                const seguridad = Math.round(prediccion.score * 100);
+                // La IA busca objetos
+                const predicciones = await model.detect(canvas);
 
-                // Si es una persona o un carro, dibujarlo en Rojo
-                if(objeto === "person" || objeto === "car" || objeto === "truck" || objeto === "chair") {
-                    ctx.strokeStyle = "#FF0000";
-                    ctx.lineWidth = 4;
-                    ctx.strokeRect(x, y, width, height);
-                    
-                    ctx.fillStyle = "#FF0000";
-                    ctx.fillRect(x, y - 20, width, 20);
-                    ctx.fillStyle = "#FFFFFF";
-                    ctx.font = "16px Arial";
-                    ctx.fillText(`${objeto} (${seguridad}%)`, x + 5, y - 5);
+                // Dibujar cuadrados sobre los objetos encontrados
+                predicciones.forEach(prediccion => {
+                    const [x, y, width, height] = prediccion.bbox;
+                    const objeto = prediccion.class;
+                    const seguridad = Math.round(prediccion.score * 100);
 
-                    // Hacer vibrar el iPhone si la detección es muy segura
-                    if(seguridad > 70 && navigator.vibrate) {
-                        navigator.vibrate(200); // Vibra por 200ms
+                    if(objeto === "person" || objeto === "car" || objeto === "truck" || objeto === "chair") {
+                        ctx.strokeStyle = "#FF0000";
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(x, y, width, height);
+                        
+                        ctx.fillStyle = "#FF0000";
+                        ctx.fillRect(x, y - 20, width, 20);
+                        ctx.fillStyle = "#FFFFFF";
+                        ctx.font = "16px Arial";
+                        ctx.fillText(`${objeto} (${seguridad}%)`, x + 5, y - 5);
+
+                        // Si estás en celular y detecta algo con alta seguridad, vibra
+                        if(seguridad > 70 && navigator.vibrate) {
+                            navigator.vibrate(150); 
+                        }
                     }
-                }
-            });
+                });
 
-            // Repetir el proceso en el siguiente cuadro (frame)
-            requestAnimationFrame(detectarObjetos);
+                // Inmediatamente después de terminar, pedir el siguiente frame (Simula video en tiempo real)
+                if(isDetecting) {
+                    timerAnalisis = setTimeout(procesarFrame, 50);
+                }
+            };
+
+            // Si hay un error de conexión con el ESP32, reintentar en 1 segundo
+            imgElement.onerror = () => {
+                if(isDetecting) {
+                    console.log("Reintentando conexión con ESP32...");
+                    timerAnalisis = setTimeout(procesarFrame, 1000);
+                }
+            };
         }
 
-        // Botón de inicio
+        // 3. Control del botón
         btnStart.addEventListener('click', () => {
             if(!isDetecting) {
                 isDetecting = true;
                 btnStart.innerText = "Detener Detección";
                 btnStart.style.backgroundColor = "#F44336";
-                statusText.innerText = "Analizando video en vivo...";
-                detectarObjetos();
+                statusText.innerText = "Analizando en vivo...";
+                procesarFrame(); // Iniciar el bucle
             } else {
                 isDetecting = false;
+                clearTimeout(timerAnalisis);
                 btnStart.innerText = "Iniciar Detección";
                 btnStart.style.backgroundColor = "#4CAF50";
                 statusText.innerText = "Pausado";
             }
         });
 
-        // Iniciar carga del modelo al abrir la página
+        // Iniciar
         cargarModelo();
     </script>
 </body>
