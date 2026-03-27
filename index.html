@@ -19,6 +19,7 @@
         .btn-start { background-color: #4CAF50; display: none; }
         #status { font-size: 16px; font-weight: bold; margin: 10px; color: yellow; }
         h2 { margin-bottom: 5px; }
+        .small-text { font-size: 12px; color: #aaa; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -29,8 +30,13 @@
     <!-- PANEL DE CONFIGURACIÓN -->
     <div class="setup-box" id="setupPanel">
         <label>Ingrese la IP de las Gafas (ESP32):</label>
-        <input type="text" id="ipInput" placeholder="Ej: 192.168.1.10 o 172.20.10.2">
+        
+        <!-- Lista de historial de IPs -->
+        <input type="text" id="ipInput" list="ipHistory" placeholder="Ej: 192.168.1.10">
+        <datalist id="ipHistory"></datalist>
+        
         <button id="btnConnect" onclick="conectarCamara()">Conectar a Gafas</button>
+        <div class="small-text">Su IP se guardará automáticamente.</div>
     </div>
 
     <!-- VIDEO E IA -->
@@ -50,18 +56,48 @@
         const setupPanel = document.getElementById('setupPanel');
         const videoContainer = document.getElementById('videoContainer');
         const ipInput = document.getElementById('ipInput');
+        const ipHistoryList = document.getElementById('ipHistory');
         
         let model = null;
         let isDetecting = false;
         let timerAnalisis = null;
         let esp32Url = "";
 
-        // 1. Cargar el modelo pre-entrenado de fondo
+        // 1. Cargar historial de IPs guardadas al iniciar
+        function cargarHistorialIP() {
+            // Leer la última IP usada
+            const ultimaIP = localStorage.getItem('ultimaIP');
+            if (ultimaIP) {
+                ipInput.value = ultimaIP;
+            }
+
+            // Cargar el menú desplegable con todas las IPs guardadas
+            let historial = JSON.parse(localStorage.getItem('historialIPs')) || [];
+            ipHistoryList.innerHTML = "";
+            historial.forEach(ip => {
+                let option = document.createElement('option');
+                option.value = ip;
+                ipHistoryList.appendChild(option);
+            });
+        }
+
+        // 2. Guardar nueva IP en la memoria del celular
+        function guardarIP(nuevaIP) {
+            localStorage.setItem('ultimaIP', nuevaIP);
+            
+            let historial = JSON.parse(localStorage.getItem('historialIPs')) || [];
+            if (!historial.includes(nuevaIP)) {
+                historial.push(nuevaIP);
+                localStorage.setItem('historialIPs', JSON.stringify(historial));
+            }
+        }
+
+        // 3. Cargar el modelo pre-entrenado de fondo
         async function cargarModelo() {
             try {
                 statusText.innerText = "Descargando IA en el celular...";
                 model = await cocoSsd.load(); 
-                statusText.innerText = "IA Lista. Ingrese IP y conecte.";
+                statusText.innerText = "IA Lista. Confirme la IP y conecte.";
                 statusText.style.color = "#00FF00";
             } catch (error) {
                 statusText.innerText = "Error de red al cargar la IA.";
@@ -69,15 +105,19 @@
             }
         }
 
-        // 2. Función cuando el usuario presiona "Conectar"
+        // 4. Función cuando el usuario presiona "Conectar"
         function conectarCamara() {
             let ip = ipInput.value.trim();
             if(!ip) {
                 alert("Por favor ingrese una dirección IP válida.");
                 return;
             }
-            // Limpiar la IP por si el usuario puso http:// o barras extra
-            ip = ip.replace("http://", "").replace("/", "");
+            
+            ip = ip.replace("http://", "").replace("https://", "").replace("/", "");
+            
+            // Guardar la IP para el futuro
+            guardarIP(ip);
+            
             esp32Url = `http://${ip}/capture`;
 
             // Ocultar panel de setup y mostrar video
@@ -85,10 +125,10 @@
             videoContainer.style.display = "inline-block";
             btnStart.style.display = "inline-block";
             btnStart.disabled = false;
-            statusText.innerText = `Gafas vinculadas (${ip}). Presione Iniciar.`;
+            statusText.innerText = `Gafas vinculadas. Presione Iniciar.`;
         }
 
-        // 3. Procesar los frames del ESP32
+        // 5. Procesar los frames del ESP32
         async function procesarFrame() {
             if (!isDetecting) return;
 
@@ -104,7 +144,6 @@
                         const objeto = prediccion.class;
                         const seguridad = Math.round(prediccion.score * 100);
 
-                        // Filtrar obstáculos: Personas y vehículos
                         if(["person", "car", "truck", "bus", "chair"].includes(objeto)) {
                             ctx.strokeStyle = "#FF0000";
                             ctx.lineWidth = 4;
@@ -116,7 +155,6 @@
                             ctx.font = "16px Arial";
                             ctx.fillText(`${objeto} (${seguridad}%)`, x + 5, y - 5);
 
-                            // Vibrar si el obstáculo es detectado con alta seguridad
                             if(seguridad > 65 && navigator.vibrate) {
                                 navigator.vibrate(150); 
                             }
@@ -129,17 +167,16 @@
 
             imgElement.onerror = () => {
                 if(isDetecting) {
-                    // Dibujar error en pantalla si se cae la red
                     ctx.fillStyle = "black";
                     ctx.fillRect(0,0, canvas.width, canvas.height);
                     ctx.fillStyle = "red";
-                    ctx.fillText("Error de conexión. Reintentando...", 50, 120);
+                    ctx.fillText(`Fallo en red. Buscando ${ipInput.value}...`, 50, 120);
                     timerAnalisis = setTimeout(procesarFrame, 1500);
                 }
             };
         }
 
-        // 4. Control del botón principal
+        // 6. Control del botón principal
         btnStart.addEventListener('click', () => {
             if(!isDetecting) {
                 isDetecting = true;
@@ -156,7 +193,8 @@
             }
         });
 
-        // Iniciar descarga de IA al abrir la app
+        // Inicializar
+        cargarHistorialIP();
         cargarModelo();
     </script>
 </body>
