@@ -3,132 +3,160 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IA Asistente Visual (iPhone)</title>
+    <title>IA Asistente Visual (Universal)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; background-color: #222; color: white; margin: 0; padding: 10px; }
-        .container { position: relative; display: inline-block; margin-top: 10px; }
+        body { font-family: Arial, sans-serif; text-align: center; background-color: #222; color: white; margin: 0; padding: 15px; }
+        .setup-box { background: #333; padding: 20px; border-radius: 10px; margin: 20px auto; max-width: 320px; box-shadow: 0 4px 8px rgba(0,0,0,0.5); }
+        input[type="text"] { width: 90%; padding: 10px; margin: 10px 0; border-radius: 5px; border: 1px solid #555; font-size: 16px; text-align: center; background: #111; color: #0f0; }
+        .container { position: relative; display: inline-block; margin-top: 10px; display: none; }
         #imgOculta { display: none; }
         #canvasOutput { border: 2px solid #fff; border-radius: 10px; background-color: #000; width: 320px; height: 240px; }
-        button { padding: 15px; font-size: 18px; margin: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; width: 90%; max-width: 320px; }
-        #status { font-size: 18px; font-weight: bold; margin: 10px; color: yellow; }
+        button { padding: 15px; font-size: 18px; margin: 10px 0; background-color: #2196F3; color: white; border: none; border-radius: 5px; width: 100%; cursor: pointer; font-weight: bold; }
+        .btn-start { background-color: #4CAF50; display: none; }
+        #status { font-size: 16px; font-weight: bold; margin: 10px; color: yellow; }
+        h2 { margin-bottom: 5px; }
     </style>
 </head>
 <body>
 
-    <h2>Asistente IA ESP32</h2>
-    <div id="status">Cargando Modelo de IA...</div>
+    <h2>Gafas IA Asistentes</h2>
+    <div id="status">Esperando conexión...</div>
 
+    <!-- PANEL DE CONFIGURACIÓN -->
+    <div class="setup-box" id="setupPanel">
+        <label>Ingrese la IP de las Gafas (ESP32):</label>
+        <input type="text" id="ipInput" placeholder="Ej: 192.168.1.10 o 172.20.10.2">
+        <button id="btnConnect" onclick="conectarCamara()">Conectar a Gafas</button>
+    </div>
+
+    <!-- VIDEO E IA -->
     <img id="imgOculta" crossorigin="anonymous" />
-    
-    <div class="container">
+    <div class="container" id="videoContainer">
         <canvas id="canvasOutput" width="320" height="240"></canvas>
     </div>
 
-    <br>
-    <button id="btnStart" disabled>Iniciar Detección</button>
+    <button class="btn-start" id="btnStart">Iniciar Detección</button>
 
     <script>
-        // ==========================================
-        // AQUÍ ESTÁ TU IP YA CONFIGURADA
-        // ==========================================
-        const ESP32_URL = "http://192.168.1.10/capture"; 
-        
         const imgElement = document.getElementById('imgOculta');
         const canvas = document.getElementById('canvasOutput');
         const ctx = canvas.getContext('2d');
         const statusText = document.getElementById('status');
         const btnStart = document.getElementById('btnStart');
+        const setupPanel = document.getElementById('setupPanel');
+        const videoContainer = document.getElementById('videoContainer');
+        const ipInput = document.getElementById('ipInput');
         
         let model = null;
         let isDetecting = false;
         let timerAnalisis = null;
+        let esp32Url = "";
 
-        // 1. Cargar el modelo pre-entrenado
+        // 1. Cargar el modelo pre-entrenado de fondo
         async function cargarModelo() {
             try {
+                statusText.innerText = "Descargando IA en el celular...";
                 model = await cocoSsd.load(); 
-                statusText.innerText = "IA Lista. Presiona Iniciar.";
+                statusText.innerText = "IA Lista. Ingrese IP y conecte.";
                 statusText.style.color = "#00FF00";
-                btnStart.disabled = false;
             } catch (error) {
-                statusText.innerText = "Error cargando la IA.";
+                statusText.innerText = "Error de red al cargar la IA.";
                 console.error(error);
             }
         }
 
-        // 2. Función que pide una foto nueva al ESP32 y la analiza
+        // 2. Función cuando el usuario presiona "Conectar"
+        function conectarCamara() {
+            let ip = ipInput.value.trim();
+            if(!ip) {
+                alert("Por favor ingrese una dirección IP válida.");
+                return;
+            }
+            // Limpiar la IP por si el usuario puso http:// o barras extra
+            ip = ip.replace("http://", "").replace("/", "");
+            esp32Url = `http://${ip}/capture`;
+
+            // Ocultar panel de setup y mostrar video
+            setupPanel.style.display = "none";
+            videoContainer.style.display = "inline-block";
+            btnStart.style.display = "inline-block";
+            btnStart.disabled = false;
+            statusText.innerText = `Gafas vinculadas (${ip}). Presione Iniciar.`;
+        }
+
+        // 3. Procesar los frames del ESP32
         async function procesarFrame() {
             if (!isDetecting) return;
 
-            // Le pedimos al ESP32 la foto a través de tu IP
-            imgElement.src = `${ESP32_URL}?nocache=${Math.random()}`;
+            imgElement.src = `${esp32Url}?nocache=${Math.random()}`;
 
-            // Cuando la foto termina de cargar desde tu ESP32, la IA la analiza
             imgElement.onload = async () => {
                 ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
 
-                const predicciones = await model.detect(canvas);
+                if(model) {
+                    const predicciones = await model.detect(canvas);
+                    predicciones.forEach(prediccion => {
+                        const [x, y, width, height] = prediccion.bbox;
+                        const objeto = prediccion.class;
+                        const seguridad = Math.round(prediccion.score * 100);
 
-                predicciones.forEach(prediccion => {
-                    const [x, y, width, height] = prediccion.bbox;
-                    const objeto = prediccion.class;
-                    const seguridad = Math.round(prediccion.score * 100);
+                        // Filtrar obstáculos: Personas y vehículos
+                        if(["person", "car", "truck", "bus", "chair"].includes(objeto)) {
+                            ctx.strokeStyle = "#FF0000";
+                            ctx.lineWidth = 4;
+                            ctx.strokeRect(x, y, width, height);
+                            
+                            ctx.fillStyle = "#FF0000";
+                            ctx.fillRect(x, y - 20, width, 20);
+                            ctx.fillStyle = "#FFFFFF";
+                            ctx.font = "16px Arial";
+                            ctx.fillText(`${objeto} (${seguridad}%)`, x + 5, y - 5);
 
-                    // Si detecta obstáculos importantes (Personas, carros, camiones, sillas)
-                    if(objeto === "person" || objeto === "car" || objeto === "truck" || objeto === "chair") {
-                        ctx.strokeStyle = "#FF0000";
-                        ctx.lineWidth = 4;
-                        ctx.strokeRect(x, y, width, height);
-                        
-                        ctx.fillStyle = "#FF0000";
-                        ctx.fillRect(x, y - 20, width, 20);
-                        ctx.fillStyle = "#FFFFFF";
-                        ctx.font = "16px Arial";
-                        ctx.fillText(`${objeto} (${seguridad}%)`, x + 5, y - 5);
-
-                        // Si estás en celular y detecta algo, vibra
-                        if(seguridad > 70 && navigator.vibrate) {
-                            navigator.vibrate(150); 
+                            // Vibrar si el obstáculo es detectado con alta seguridad
+                            if(seguridad > 65 && navigator.vibrate) {
+                                navigator.vibrate(150); 
+                            }
                         }
-                    }
-                });
-
-                // Pedir la siguiente foto inmediatamente
-                if(isDetecting) {
-                    timerAnalisis = setTimeout(procesarFrame, 50);
+                    });
                 }
+
+                if(isDetecting) timerAnalisis = setTimeout(procesarFrame, 50);
             };
 
-            // Si hay un error, reintentar
             imgElement.onerror = () => {
                 if(isDetecting) {
-                    timerAnalisis = setTimeout(procesarFrame, 1000);
+                    // Dibujar error en pantalla si se cae la red
+                    ctx.fillStyle = "black";
+                    ctx.fillRect(0,0, canvas.width, canvas.height);
+                    ctx.fillStyle = "red";
+                    ctx.fillText("Error de conexión. Reintentando...", 50, 120);
+                    timerAnalisis = setTimeout(procesarFrame, 1500);
                 }
             };
         }
 
-        // 3. Control del botón
+        // 4. Control del botón principal
         btnStart.addEventListener('click', () => {
             if(!isDetecting) {
                 isDetecting = true;
                 btnStart.innerText = "Detener Detección";
                 btnStart.style.backgroundColor = "#F44336";
-                statusText.innerText = "Analizando en vivo...";
+                statusText.innerText = "Analizando video en vivo...";
                 procesarFrame(); 
             } else {
                 isDetecting = false;
                 clearTimeout(timerAnalisis);
-                btnStart.innerText = "Iniciar Detección";
+                btnStart.innerText = "Reanudar Detección";
                 btnStart.style.backgroundColor = "#4CAF50";
                 statusText.innerText = "Pausado";
             }
         });
 
-        // Iniciar
+        // Iniciar descarga de IA al abrir la app
         cargarModelo();
     </script>
 </body>
